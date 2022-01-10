@@ -9,9 +9,7 @@ edition = "2021"
 cortex-m = { version = "0.7.3" }
 cortex-m-rt = "0.7.1"
 rtt-target = { version = "0.3.1", features = ["cortex-m"] }
-embedded-hal = "0.2.6"
 nrf9160-pac = "0.10.1"
-bitvec = { version = "0.22.3", default-features = false, features = ["atomic"] }
 num_enum = { version = "0.5.1", default-features = false }
 
 [profile.release]

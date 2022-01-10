@@ -1,0 +1,15 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "cargo",
+			"command": "objcopy",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build",
+			"label": "Build bootloader with HEX",
+			"args": ["--release", "--", "-O", "ihex", "target/thumbv8m.main-none-eabihf/release/dis-bootloader.hex"]
+		}
+	]
+}
