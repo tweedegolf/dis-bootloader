@@ -2,45 +2,117 @@
 #![no_std]
 #![feature(type_alias_impl_trait)]
 
-use crate::flash_addresses::*;
-use flash::{erase_page, program_page};
-use rtt_target::{rprintln, rtt_init_print};
-use state::BootloaderState;
+use dis_bootloader::{
+    flash::{erase_page, program_page},
+    flash_addresses::{
+        bootloader_flash_page_range, bootloader_flash_range, bootloader_scratch_page_range,
+        bootloader_scratch_range, bootloader_state_page_range, bootloader_state_range,
+        program_slot_a_page_range, program_slot_a_range, program_slot_b_page_range,
+        program_slot_b_range, PAGE_SIZE,
+    },
+    reset_reason::ResetReason,
+    state::{BootloaderGoal, BootloaderState, PageState},
+};
+use embassy_nrf::{
+    gpio::NoPin,
+    interrupt,
+    peripherals::UARTETWISPI0,
+    uarte::{self, Uarte},
+};
+use embassy_traits::uart::Write;
+use panic_persist::get_panic_message_bytes;
 
-mod flash;
-mod flash_addresses;
-mod state;
+type Uart = Uarte<'static, UARTETWISPI0>;
 
-#[cortex_m_rt::entry]
-fn main() -> ! {
-    let _cp = cortex_m::Peripherals::take().unwrap();
-    let mut dp = nrf9160_pac::Peripherals::take().unwrap();
+#[embassy::main]
+async fn main(_spawner: embassy::executor::Spawner, p: embassy_nrf::Peripherals) {
+    run_main(p).await;
+}
 
-    rtt_init_print!(NoBlockSkip, 32384);
+#[macro_export]
+macro_rules! uprintln {
+    ($uart:expr, $($arg:tt)*) => {
+        {
+            use core::fmt::Write as _;
+            let mut str = arrayvec::ArrayString::<1024>::new();
+            match writeln!(str, $($arg)*) {
+                Ok(_) => {
+                    $uart.write(str.as_bytes()).await.unwrap();
+                },
+                Err(_) => $uart.write("Error: failed to print string, too long".as_bytes()).await.unwrap(),
+            };
+        }
+};
+}
 
-    rprintln!("Starting bootloader");
-    rprintln!("Defined memory regions:");
-    rprintln!(
+async fn run_main(p: embassy_nrf::Peripherals) {
+    let nvmc = unsafe { &*embassy_nrf::pac::NVMC::PTR };
+
+    let mut config = uarte::Config::default();
+    config.parity = uarte::Parity::EXCLUDED;
+    config.baudrate = uarte::Baudrate::BAUD115200;
+
+    let irq = interrupt::take!(UARTE0_SPIM0_SPIS0_TWIM0_TWIS0);
+
+    #[cfg(feature = "feather")]
+    let (uart_rx_pin, uart_tx_pin) = (p.P0_05, p.P0_06);
+    #[cfg(feature = "logistics")]
+    let (uart_rx_pin, uart_tx_pin) = (p.P0_28, p.P0_29);
+    #[cfg(feature = "mobility")]
+    let (uart_rx_pin, uart_tx_pin) = (p.P0_28, p.P0_29);
+
+    let mut uart: Uart = uarte::Uarte::new(
+        p.UARTETWISPI0,
+        irq,
+        uart_rx_pin,
+        uart_tx_pin,
+        NoPin,
+        NoPin,
+        config,
+    );
+
+    let reset_reason = ResetReason::lookup(unsafe { &*embassy_nrf::pac::POWER::PTR });
+    ResetReason::clear(unsafe { &*embassy_nrf::pac::POWER::PTR });
+
+    if reset_reason == ResetReason::Lockup {
+        cortex_m::asm::delay(u32::MAX);
+    }
+
+    uprintln!(uart, "Starting bootloader. Reset reason: {}", reset_reason);
+
+    // Check if there was a panic message, if so, send to UART
+    if let Some(msg) = get_panic_message_bytes() {
+        uprintln!(uart, "Booted up from a panic:");
+        uart.write(msg).await.unwrap();
+    }
+
+    uprintln!(uart, "Defined memory regions:");
+    uprintln!(
+        uart,
         "\tbootloader flash:   {:08X?} ({:03?})",
         bootloader_flash_range(),
         bootloader_flash_page_range()
     );
-    rprintln!(
+    uprintln!(
+        uart,
         "\tbootloader scratch: {:08X?} ({:03?})",
         bootloader_scratch_range(),
         bootloader_scratch_page_range()
     );
-    rprintln!(
+    uprintln!(
+        uart,
         "\tbootloader state:   {:08X?} ({:03?})",
         bootloader_state_range(),
         bootloader_state_page_range()
     );
-    rprintln!(
+    uprintln!(
+        uart,
         "\tprogram slot a:     {:08X?} ({:03?})",
         program_slot_a_range(),
         program_slot_a_page_range()
     );
-    rprintln!(
+    uprintln!(
+        uart,
         "\tprogram slot b:     {:08X?} ({:03?})",
         program_slot_b_range(),
         program_slot_b_page_range()
@@ -51,35 +123,51 @@ fn main() -> ! {
 
     // The state must be valid or we will just jump to the application
     if !state.is_valid() {
-        rprintln!("State is invalid, jumping to application");
-        jump_to_application();
+        uprintln!(uart, "State is invalid, jumping to application");
+        jump_to_application(&mut uart).await;
     }
 
     let goal = state.goal();
-    rprintln!("Goal: {:?}", goal);
+    uprintln!(uart, "Goal: {:?}", goal);
 
     match goal {
-        state::BootloaderGoal::JumpToApplication => {
-            jump_to_application();
+        BootloaderGoal::JumpToApplication => {
+            jump_to_application(&mut uart).await;
         }
-        state::BootloaderGoal::StartSwap => {
-            state.prepare_swap(false, &mut dp.NVMC_S);
-            perform_swap(false, &mut state, &mut dp.NVMC_S);
+        BootloaderGoal::StartSwap => {
+            state.prepare_swap(false, nvmc);
+            perform_swap(false, &mut state, nvmc, &mut uart).await;
+            jump_to_application(&mut uart).await;
         }
-        state::BootloaderGoal::FinishSwap => perform_swap(false, &mut state, &mut dp.NVMC_S),
-        state::BootloaderGoal::StartTestSwap => {
-            state.prepare_swap(true, &mut dp.NVMC_S);
-            perform_swap(true, &mut state, &mut dp.NVMC_S);
+        BootloaderGoal::FinishSwap => {
+            perform_swap(false, &mut state, nvmc, &mut uart).await;
+            jump_to_application(&mut uart).await;
         }
-        state::BootloaderGoal::FinishTestSwap => perform_swap(true, &mut state, &mut dp.NVMC_S),
+        BootloaderGoal::StartTestSwap => {
+            state.prepare_swap(true, nvmc);
+            perform_swap(true, &mut state, nvmc, &mut uart).await;
+            jump_to_application(&mut uart).await;
+        }
+        BootloaderGoal::FinishTestSwap => {
+            perform_swap(true, &mut state, nvmc, &mut uart).await;
+            jump_to_application(&mut uart).await;
+        }
     }
 
     loop {}
 }
 
-fn perform_swap(test_swap: bool, state: &mut BootloaderState, flash: &mut nrf9160_pac::NVMC_S) {
+async fn perform_swap(
+    test_swap: bool,
+    state: &mut BootloaderState,
+    flash: &embassy_nrf::pac::nvmc::RegisterBlock,
+    uart: &mut Uart,
+) {
     let total_program_pages = program_slot_a_page_range().len() as u32;
     let total_scratch_pages = bootloader_scratch_page_range().len() as u32;
+
+    uprintln!(uart, "total_program_pages: {}", total_program_pages,);
+    uprintln!(uart, "total_scratch_pages: {}", total_scratch_pages,);
 
     let mut scratch_page_index = 0;
 
@@ -90,14 +178,27 @@ fn perform_swap(test_swap: bool, state: &mut BootloaderState, flash: &mut nrf916
         let slot_b_address = slot_b_page * PAGE_SIZE;
 
         while !state.get_page_state(page).is_swapped() {
-            rprintln!("Swapping page {}: {:?}", page, state.get_page_state(page));
+            uprintln!(
+                uart,
+                "Swapping page {}: {:?}",
+                page,
+                state.get_page_state(page)
+            );
             match state.get_page_state(page) {
-                state::PageState::Original => {
+                PageState::Original => {
                     // We need to copy the A page to a scratch page
 
                     // Decide which scratch page to use
                     let scratch_page = bootloader_scratch_page_range().start + scratch_page_index;
                     let scratch_address = scratch_page * PAGE_SIZE;
+
+                    uprintln!(
+                        uart,
+                        "Moving page @{:#010X} to page {:#010X}",
+                        slot_a_address,
+                        scratch_address
+                    );
+
                     // Erase the scratch area
                     erase_page(scratch_address, flash);
                     // Program the data from slot A into the scratch slot
@@ -106,17 +207,24 @@ fn perform_swap(test_swap: bool, state: &mut BootloaderState, flash: &mut nrf916
                         unsafe {
                             core::slice::from_raw_parts(
                                 slot_a_address as *const u32,
-                                PAGE_SIZE as usize,
+                                PAGE_SIZE as usize / core::mem::size_of::<u32>(),
                             )
                         },
                         flash,
                     );
                     // Update the state
-                    state.set_page_state(page, state::PageState::InScratch { scratch_page });
+                    state.set_page_state(page, PageState::InScratch { scratch_page });
                     state.burn_store(flash);
                 }
-                state::PageState::InScratch { scratch_page } => {
+                PageState::InScratch { scratch_page } => {
                     // We need to copy the B page to the A slot
+
+                    uprintln!(
+                        uart,
+                        "Moving page @{:#010X} to page {:#010X}",
+                        slot_b_address,
+                        slot_a_address
+                    );
 
                     // Erase the A page
                     erase_page(slot_a_address, flash);
@@ -126,22 +234,26 @@ fn perform_swap(test_swap: bool, state: &mut BootloaderState, flash: &mut nrf916
                         unsafe {
                             core::slice::from_raw_parts(
                                 slot_b_address as *const u32,
-                                PAGE_SIZE as usize,
+                                PAGE_SIZE as usize / core::mem::size_of::<u32>(),
                             )
                         },
                         flash,
                     );
                     // Update the state
-                    state.set_page_state(
-                        page,
-                        state::PageState::InScratchOverwritten { scratch_page },
-                    );
+                    state.set_page_state(page, PageState::InScratchOverwritten { scratch_page });
                     state.burn_store(flash);
                 }
-                state::PageState::InScratchOverwritten { scratch_page } => {
+                PageState::InScratchOverwritten { scratch_page } => {
                     // We need to copy the scratch page to the B slot
 
                     let scratch_address = scratch_page * PAGE_SIZE;
+
+                    uprintln!(
+                        uart,
+                        "Moving page @{:#010X} to page {:#010X}",
+                        scratch_address,
+                        slot_b_address
+                    );
 
                     // Erase the B page
                     erase_page(slot_b_address, flash);
@@ -151,17 +263,17 @@ fn perform_swap(test_swap: bool, state: &mut BootloaderState, flash: &mut nrf916
                         unsafe {
                             core::slice::from_raw_parts(
                                 scratch_address as *const u32,
-                                PAGE_SIZE as usize,
+                                PAGE_SIZE as usize / core::mem::size_of::<u32>(),
                             )
                         },
                         flash,
                     );
                     // Update the state
-                    state.set_page_state(page, state::PageState::Swapped);
+                    state.set_page_state(page, PageState::Swapped);
 
                     state.burn_store(flash);
                 }
-                state::PageState::Swapped => {
+                PageState::Swapped => {
                     // We're done and shouldn't be able to get here
                     unreachable!()
                 }
@@ -173,31 +285,23 @@ fn perform_swap(test_swap: bool, state: &mut BootloaderState, flash: &mut nrf916
 
     // We're done, so we should change the state
     if test_swap {
-        state.set_goal(state::BootloaderGoal::StartSwap);
+        state.set_goal(BootloaderGoal::StartSwap);
     } else {
-        state.set_goal(state::BootloaderGoal::JumpToApplication);
+        state.set_goal(BootloaderGoal::JumpToApplication);
     }
+
+    state.store(flash);
 }
 
-fn jump_to_application() -> ! {
-    let application_address = program_slot_a_range().start + 0x200;
+async fn jump_to_application(uart: &mut Uart) -> ! {
+    let application_address = program_slot_a_range().start + 0x200; // We use a fixed offset here because because the SPM binary still has the MCUboot header. Very ugly
 
-    rprintln!("Jumping to {:#08X}", application_address);
+    uprintln!(uart, "Jumping to {:#08X}", application_address);
 
-    unsafe {
-        cortex_m::asm::bootload(application_address as *const u32)
-    }
+    unsafe { cortex_m::asm::bootload(application_address as *const u32) }
 }
 
 #[cortex_m_rt::exception]
 unsafe fn HardFault(frame: &cortex_m_rt::ExceptionFrame) -> ! {
     panic!("{:?}", frame);
-}
-
-#[panic_handler]
-fn panic(info: &core::panic::PanicInfo) -> ! {
-    rprintln!("{}", info);
-    loop {
-        cortex_m::asm::bkpt();
-    }
 }

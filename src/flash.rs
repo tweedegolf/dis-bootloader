@@ -1,5 +1,6 @@
 use core::mem::size_of;
 
+#[track_caller]
 fn assert_valid_page_address(page_address: u32) {
     assert!(
         page_address % 0x0000_1000 == 0,
@@ -11,7 +12,7 @@ fn assert_valid_page_address(page_address: u32) {
     );
 }
 
-pub fn erase_page(page_address: u32, flash: &mut nrf9160_pac::NVMC_S) {
+pub fn erase_page(page_address: u32, flash: &embassy_nrf::pac::nvmc::RegisterBlock) {
     assert_valid_page_address(page_address);
 
     // Enable the erase functionality of the flash
@@ -32,11 +33,16 @@ pub fn erase_page(page_address: u32, flash: &mut nrf9160_pac::NVMC_S) {
     cortex_m::asm::isb();
 }
 
-pub fn program_page(page_address: u32, data: &[u32], flash: &mut nrf9160_pac::NVMC_S) {
+#[track_caller]
+pub fn program_page(
+    page_address: u32,
+    data: &[u32],
+    flash: &embassy_nrf::pac::nvmc::RegisterBlock,
+) {
     assert_valid_page_address(page_address);
     assert!(
-        data.len() < 0x0000_1000 / size_of::<u32>(),
-        "Only 4KB can be programmed at a time"
+        data.len() <= 0x0000_1000 / size_of::<u32>(),
+        "Only 4KB can be programmed at a time",
     );
 
     // Now we need to write the buffer to flash
@@ -47,7 +53,7 @@ pub fn program_page(page_address: u32, data: &[u32], flash: &mut nrf9160_pac::NV
     for (data_word, flash_word) in data
         .iter()
         // Every word of the buffer corresponds to a word in flash
-        .zip(page_address..page_address + 0x0000_1000)
+        .zip((page_address..page_address + 0x0000_1000).step_by(core::mem::size_of::<u32>()))
         // We only have to write when the words are different
         .filter(|(b, f)| *b != f)
     {
@@ -55,11 +61,8 @@ pub fn program_page(page_address: u32, data: &[u32], flash: &mut nrf9160_pac::NV
             (flash_word as *mut u32).write_volatile(*data_word);
         }
         // Wait for the write to be done
-        while flash.readynext.read().readynext().is_busy() {}
+        while flash.ready.read().ready().is_busy() {}
     }
-
-    // Wait for the write to be fully done
-    while flash.ready.read().ready().is_busy() {}
 
     // Set the flash to default readonly mode
     flash.config.modify(|_, w| w.wen().ren());

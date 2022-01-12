@@ -10,8 +10,12 @@ MEMORY
     BOOTLOADER_SCRATCH_FLASH : ORIGIN = 0x000F8000, LENGTH = 28K
     BOOTLOADER_STATE_FLASH   : ORIGIN = 0x000FF000, LENGTH = 4K
 
-    RAM   : ORIGIN = 0x20000000, LENGTH = 64K
+    RAM   : ORIGIN = 0x20000000, LENGTH = 63K
+    PANDUMP: ORIGIN = 0x2000FC00, LENGTH = 1K
 }
+
+_panic_dump_start = ORIGIN(PANDUMP);
+_panic_dump_end   = ORIGIN(PANDUMP) + LENGTH(PANDUMP);
 
 _bootloader_flash_start = ORIGIN(FLASH);
 _bootloader_flash_end = _bootloader_flash_start + LENGTH(FLASH);

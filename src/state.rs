@@ -85,7 +85,7 @@ impl BootloaderState {
 
     /// Sets the state so that a swap can be started.
     /// Also performs a fresh erase so that all expected burn-in flashing can happen as expected.
-    pub fn prepare_swap(&mut self, test_swap: bool, flash: &mut nrf9160_pac::NVMC_S) {
+    pub fn prepare_swap(&mut self, test_swap: bool, flash: &embassy_nrf::pac::nvmc::RegisterBlock) {
         // We're starting a swap, so our new goal is finishing it
         self.set_goal(if test_swap {
             BootloaderGoal::FinishTestSwap
@@ -115,7 +115,7 @@ impl BootloaderState {
     }
 
     /// Stores the bootloader buffer in flash by first erasing the flash and then performing a burn-store
-    pub fn store(&self, flash: &mut nrf9160_pac::NVMC_S) {
+    pub fn store(&self, flash: &embassy_nrf::pac::nvmc::RegisterBlock) {
         // Erase the page
         erase_page(bootloader_state_range().start, flash);
 
@@ -127,7 +127,7 @@ impl BootloaderState {
     /// only emits word write for words that have changes in them.
     /// Every word may be written to twice.
     /// The burn store can only change bits from 1 to 0.
-    pub fn burn_store(&self, flash: &mut nrf9160_pac::NVMC_S) {
+    pub fn burn_store(&self, flash: &embassy_nrf::pac::nvmc::RegisterBlock) {
         program_page(bootloader_state_range().start, &self.buffer, flash);
     }
 
