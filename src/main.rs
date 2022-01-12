@@ -72,7 +72,6 @@ async fn run_main(p: embassy_nrf::Peripherals) {
     );
 
     let reset_reason = ResetReason::lookup(unsafe { &*embassy_nrf::pac::POWER::PTR });
-    ResetReason::clear(unsafe { &*embassy_nrf::pac::POWER::PTR });
 
     if reset_reason == ResetReason::Lockup {
         cortex_m::asm::delay(u32::MAX);
