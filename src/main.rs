@@ -42,7 +42,7 @@ macro_rules! uprintln {
                 Err(_) => $uart.write("Error: failed to print string, too long".as_bytes()).await.unwrap(),
             };
         }
-};
+    };
 }
 
 async fn run_main(p: embassy_nrf::Peripherals) {
@@ -72,10 +72,6 @@ async fn run_main(p: embassy_nrf::Peripherals) {
     );
 
     let reset_reason = ResetReason::lookup(unsafe { &*embassy_nrf::pac::POWER::PTR });
-
-    if reset_reason == ResetReason::Lockup {
-        cortex_m::asm::delay(u32::MAX);
-    }
 
     uprintln!(uart, "Starting bootloader. Reset reason: {}", reset_reason);
 
