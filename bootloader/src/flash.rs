@@ -1,5 +1,19 @@
 use core::mem::size_of;
 
+pub struct Flash<'a> {
+    pub registers: &'a embassy_nrf::pac::nvmc::RegisterBlock,
+}
+
+impl<'a> shared::Flash for Flash<'a> {
+    fn erase_page(&mut self, page_address: u32) {
+        erase_page(page_address, self.registers)
+    }
+
+    fn program_page(&mut self, page_address: u32, data: &[u32]) {
+        program_page(page_address, data, self.registers)
+    }
+}
+
 #[track_caller]
 fn assert_valid_page_address(page_address: u32) {
     assert!(

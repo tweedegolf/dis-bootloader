@@ -12,6 +12,18 @@ use std::env;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
+use std::process::Command;
+
+fn get_git_short(version: &str) -> String {
+    let output = Command::new("git")
+        .args(&["rev-parse", "--short", &format!("{}~0", version)])
+        .output()
+        .unwrap_or_else(|_| panic!("`git rev-parse --short {}` failed to run.", version));
+    std::str::from_utf8(&output.stdout)
+        .unwrap()
+        .trim()
+        .to_string()
+}
 
 fn main() {
     // Put `memory.x` in our output directory and ensure it's
@@ -28,4 +40,11 @@ fn main() {
     // here, we ensure the build script is only re-run when
     // `memory.x` is changed.
     println!("cargo:rerun-if-changed=memory.x");
+
+    // We need to print the cargo version and git hash in the bootloader
+    let cargo_package_version = env!("CARGO_PKG_VERSION").trim();
+    let git_hash_head = get_git_short("HEAD");
+
+    println!("cargo:rustc-env=CP_GIT={}", git_hash_head);
+    println!("cargo:rustc-env=CP_CARGO={}", cargo_package_version);
 }

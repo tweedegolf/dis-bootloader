@@ -2,8 +2,8 @@ use core::{mem::size_of, ops::Range};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use crate::{
-    flash::{erase_page, program_page},
-    flash_addresses::{bootloader_state_range, program_slot_a_page_range},
+    flash_addresses::{bootloader_state_range, program_slot_a_page_range, PAGE_SIZE},
+    Flash,
 };
 
 /// This state is stored on the state page
@@ -16,7 +16,7 @@ impl BootloaderState {
     const VALID_WORD: u32 = 0xB00210AD; // Bootload
 
     /// The index of where the Valid word is stored
-    const VALID_WORD_INDEX: usize = 0;
+    const CRC_INDEX: usize = 0;
     /// The index of where the goal is stored
     const GOAL_INDEX: usize = 1;
 
@@ -28,17 +28,32 @@ impl BootloaderState {
     const FINISHED_PAGE_RANGE: Range<usize> = 768..1024;
 
     pub fn is_valid(&self) -> bool {
-        self.buffer[Self::VALID_WORD_INDEX] == Self::VALID_WORD
+        let stored_crc = self.buffer[Self::CRC_INDEX];
+        let calculated_crc = self.calculate_self_crc();
+        stored_crc == calculated_crc
     }
 
     pub fn set_valid(&mut self, validity: bool) {
-        let value = if validity {
-            Self::VALID_WORD
+        let crc_value = if validity {
+            self.calculate_self_crc()
         } else {
             0xFFFF_FFFF
         };
 
-        self.buffer[Self::GOAL_INDEX] = value;
+        self.buffer[Self::CRC_INDEX] = crc_value;
+    }
+
+    /// Calculates the crc of the internal buffer between the crc word and the page states.
+    /// The crc is not included because we can't calculate that.
+    /// The page state ranges are not included because those are burn_stored and we don't want to have to update the CRC
+    /// everytime because that would defeat the purpose of doing the burn stores.
+    fn calculate_self_crc(&self) -> u32 {
+        let crc = crc::Crc::<u32>::new(&crc::CRC_32_MPEG_2);
+        let mut digest = crc.digest();
+        for word in &self.buffer[Self::CRC_INDEX + 1 .. Self::CACHED_PAGES_RANGE.start] {
+            digest.update(&word.to_ne_bytes());
+        }
+        digest.finalize()
     }
 
     /// Get the stored goal value from the buffer.
@@ -49,7 +64,15 @@ impl BootloaderState {
 
     /// Sets the stored goal value into the buffer.
     pub fn set_goal(&mut self, goal: BootloaderGoal) {
+        // When we change the goal, we also need to update the CRC
+        let is_valid = self.is_valid();
+
         self.buffer[Self::GOAL_INDEX] = goal.into();
+
+        if is_valid {
+            // The state was valid before, so let's update it so it is valid again
+            self.set_valid(is_valid);
+        }
     }
 
     pub fn get_page_state(&self, page: u32) -> PageState {
@@ -85,7 +108,7 @@ impl BootloaderState {
 
     /// Sets the state so that a swap can be started.
     /// Also performs a fresh erase so that all expected burn-in flashing can happen as expected.
-    pub fn prepare_swap(&mut self, test_swap: bool, flash: &embassy_nrf::pac::nvmc::RegisterBlock) {
+    pub fn prepare_swap(&mut self, test_swap: bool, flash: &mut impl Flash) {
         // We're starting a swap, so our new goal is finishing it
         self.set_goal(if test_swap {
             BootloaderGoal::FinishTestSwap
@@ -103,38 +126,50 @@ impl BootloaderState {
     /// Loads the bootloader state from flash
     pub fn load() -> Self {
         // Get where the state is stored
-        let state_flash_slice = unsafe { Self::get_flash_slice() };
+        let (state_flash_slice_0, state_flash_slice_1) = unsafe { Self::get_state_flash_slices() };
 
         // Create our buffer and do a sanity check
         let mut buffer = [0xFFFFFFFF; 1024];
 
         // Read the flash into our ram buffer
-        buffer.copy_from_slice(state_flash_slice);
+        buffer.copy_from_slice(state_flash_slice_0);
 
-        Self { buffer }
+        let mut s = Self { buffer };
+
+        // If the first page is not valid (which is possible when the [Self::store] function gets reset inbetween or during its erase_page and program_page calls),
+        // Then we want to return the second page.
+        if !s.is_valid() {
+            s.buffer.copy_from_slice(state_flash_slice_1);
+        }
+
+        s
     }
 
     /// Stores the bootloader buffer in flash by first erasing the flash and then performing a burn-store
-    pub fn store(&self, flash: &embassy_nrf::pac::nvmc::RegisterBlock) {
-        // Erase the page
-        erase_page(bootloader_state_range().start, flash);
-
-        // Store the buffer
-        self.burn_store(flash);
+    pub fn store(&self, flash: &mut impl Flash) {
+        // Erase the first page
+        flash.erase_page(bootloader_state_range().start);
+        // Store the buffer in the first page
+        flash.program_page(bootloader_state_range().start, &self.buffer);
+        // Erase the second page
+        flash.erase_page(bootloader_state_range().start + PAGE_SIZE);
+        // Store the buffer in the second page
+        flash.program_page(bootloader_state_range().start + PAGE_SIZE, &self.buffer);
     }
 
     /// Stores the bootloader buffer in flash, but does not perform an erase and
     /// only emits word write for words that have changes in them.
     /// Every word may be written to twice.
     /// The burn store can only change bits from 1 to 0.
-    pub fn burn_store(&self, flash: &embassy_nrf::pac::nvmc::RegisterBlock) {
-        program_page(bootloader_state_range().start, &self.buffer, flash);
+    pub fn burn_store(&self, flash: &mut impl Flash) {
+        flash.program_page(bootloader_state_range().start, &self.buffer);
+        flash.program_page(bootloader_state_range().start + PAGE_SIZE, &self.buffer);
     }
 
-    unsafe fn get_flash_slice() -> &'static [u32] {
+    unsafe fn get_state_flash_slices() -> (&'static [u32], &'static [u32]) {
         let state_range = bootloader_state_range();
         let start_ptr = state_range.start as *const u32;
-        core::slice::from_raw_parts(start_ptr, state_range.len() / size_of::<u32>())
+        core::slice::from_raw_parts(start_ptr, state_range.len() / size_of::<u32>()).split_at(1024)
     }
 }
 
