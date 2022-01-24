@@ -11,7 +11,6 @@ use embassy_nrf::{
     peripherals::UARTETWISPI0,
     uarte::{self, Uarte},
 };
-use embassy_traits::uart::{Read, Write};
 use panic_persist::get_panic_message_bytes;
 use shared::{
     flash_addresses::{
@@ -308,8 +307,11 @@ async fn perform_swap(
 async fn jump_to_application(mut uart: Uart) -> ! {
     // The application may not be stationed at the start of its slot.
     // We need to search for it first.
-    // We will jump to the first non-erased (0xFFFF_FFFF) word if that could be a pointer to a reset vector inside the program_slot_a_range
+    // We will bootload to the first non-erased & non-padding (0xFFFF_FFFF, 0x0000_0000) word if the word after it could be a pointer to a reset vector inside the program_slot_a_range.
+    // (The first word of the vector table is the initial stack pointer)
     let mut application_address = None;
+
+    let mut found_init_stack_pointer = false;
 
     for possible_address in program_slot_a_range().step_by(4) {
         // We can read this address safely because it will always be in flash
@@ -317,11 +319,20 @@ async fn jump_to_application(mut uart: Uart) -> ! {
 
         match address_value {
             0xFFFF_FFFF => continue,
-            _ if program_slot_a_range().contains(&address_value) => {
+            0x0000_0000 => continue,
+            _ if (0x2000_0000..0x2004_0000).contains(&address_value)
+                && !found_init_stack_pointer =>
+            {
                 application_address = Some(possible_address);
+                found_init_stack_pointer = true;
+            }
+            _ if program_slot_a_range().contains(&address_value) && found_init_stack_pointer => {
                 break;
             }
-            _ => break,
+            _ => {
+                application_address = None;
+                break;
+            }
         }
     }
 
@@ -340,5 +351,5 @@ async fn jump_to_application(mut uart: Uart) -> ! {
 
 #[cortex_m_rt::exception]
 unsafe fn HardFault(frame: &cortex_m_rt::ExceptionFrame) -> ! {
-    panic!("{:?}", frame);
+    panic!("Hardfault: {:?}", frame);
 }
