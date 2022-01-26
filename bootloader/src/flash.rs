@@ -1,5 +1,8 @@
+//! Implementation of [Flash]
+
 use core::mem::size_of;
 
+/// The bootloader's implementation of the flash operations
 pub struct Flash<'a> {
     pub registers: &'a embassy_nrf::pac::nvmc::RegisterBlock,
 }
@@ -63,6 +66,7 @@ impl<'a> shared::Flash for Flash<'a> {
     }
 }
 
+/// Asserts that the address is at the start of a flash page
 #[track_caller]
 fn assert_valid_page_address(page_address: u32) {
     assert!(

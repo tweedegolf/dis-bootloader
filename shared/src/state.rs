@@ -1,12 +1,19 @@
-use core::{mem::size_of, ops::Range};
-use num_enum::{IntoPrimitive, TryFromPrimitive};
+//! Implementation of the bootloader state
 
 use crate::{
     flash_addresses::{bootloader_state_range, program_slot_a_page_range, PAGE_SIZE},
     Flash,
 };
+use core::{mem::size_of, ops::Range};
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-/// This state is stored on the state page
+/// This state is stored on the state pages.
+///
+/// It is both the API the application uses to set the bootloader goal and the store for the swapping process.
+///
+/// Semantically this is stored on one flash page, but if it were only stored on one, then
+/// there is a possibility that the page would be corrupted in the erase-program cycle.
+/// By using two pages, this is prevented.
 pub struct BootloaderState {
     buffer: [u32; 4096 / size_of::<u32>()],
 }
@@ -15,7 +22,7 @@ impl BootloaderState {
     /// The word that needs to be present to know if the state is valid instead of erased or random bits
     const VALID_WORD: u32 = 0xB00210AD; // Bootload
 
-    /// The index of where the Valid word is stored
+    /// The index of where the crc is stored
     const CRC_INDEX: usize = 0;
     /// The index of where the goal is stored
     const GOAL_INDEX: usize = 1;
@@ -27,12 +34,15 @@ impl BootloaderState {
     /// The range of words that stores the page status for the copy from scratch to the B image
     const FINISHED_PAGE_RANGE: Range<usize> = 768..1024;
 
+    /// Tests if the state is valid by running a CRC over it and comparing the result against the stored CRC
     pub fn is_valid(&self) -> bool {
         let stored_crc = self.buffer[Self::CRC_INDEX];
         let calculated_crc = self.calculate_self_crc();
         stored_crc == calculated_crc
     }
 
+    /// If set to true, calculates the CRC of the current state and sets the crc word to the result.
+    /// If set to false, the crc word is set to a default wrong value.
     pub fn set_valid(&mut self, validity: bool) {
         let crc_value = if validity {
             self.calculate_self_crc()
@@ -50,7 +60,7 @@ impl BootloaderState {
     fn calculate_self_crc(&self) -> u32 {
         let crc = crc::Crc::<u32>::new(&crc::CRC_32_MPEG_2);
         let mut digest = crc.digest();
-        for word in &self.buffer[Self::CRC_INDEX + 1 .. Self::CACHED_PAGES_RANGE.start] {
+        for word in &self.buffer[Self::CRC_INDEX + 1..Self::CACHED_PAGES_RANGE.start] {
             digest.update(&word.to_ne_bytes());
         }
         digest.finalize()
@@ -75,6 +85,8 @@ impl BootloaderState {
         }
     }
 
+    /// Gets the state of the page with the given index. The index is global,
+    /// so the page that starts at address 0x000A_3000 has index 0xA3.
     pub fn get_page_state(&self, page: u32) -> PageState {
         let cached_value = self.buffer[Self::CACHED_PAGES_RANGE][page as usize];
         let copied_value = self.buffer[Self::COPIED_PAGES_RANGE][page as usize];
@@ -91,6 +103,7 @@ impl BootloaderState {
         }
     }
 
+    /// Sets the page state to the given value.
     pub fn set_page_state(&mut self, page: u32, state: PageState) {
         let (cached_value, copied_value, finished_value) = match state {
             PageState::Original => (0xFFFF_FFFF, 0xFFFF_FFFF, 0xFFFF_FFFF),
@@ -173,6 +186,7 @@ impl BootloaderState {
     }
 }
 
+/// The goal of the bootloader
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, IntoPrimitive, TryFromPrimitive)]
 pub enum BootloaderGoal {
@@ -184,15 +198,16 @@ pub enum BootloaderGoal {
     /// (Internal state only) The bootloader started swapping and should finish it.
     /// This is only ever relevant when the bootloader was reset in the middle of a swap.
     FinishSwap = 2,
-    /// The B image should be swapped into the A image slot. After than, this state is set to [StartSwap] again
+    /// The B image should be swapped into the A image slot. After than, this state is set to [Self::StartSwap] again
     /// to let the bootloader swap back the image after another reboot. This is similar to the MCUboot test swap.
-    /// The application can verify itself by setting the goal to [JumpToApplication] to prevent rollback.
+    /// The application can verify itself by setting the goal to [Self::JumpToApplication] to prevent rollback.
     StartTestSwap = 3,
     /// (Internal state only) The bootloader started test swapping and should finish it.
     /// This is only ever relevant when the bootloader was reset in the middle of a test swap.
     FinishTestSwap = 4,
 }
 
+/// The state of a page
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum PageState {
     /// This page is still in the original spot

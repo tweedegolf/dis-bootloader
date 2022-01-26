@@ -1,10 +1,11 @@
+#![doc = include_str!("../../README.md")]
 #![no_main]
 #![no_std]
 #![feature(type_alias_impl_trait)]
-
-use core::mem::MaybeUninit;
+#![warn(missing_docs)]
 
 use crate::flash::Flash;
+use core::mem::MaybeUninit;
 use embassy_nrf::{
     gpio::NoPin,
     interrupt,
@@ -26,14 +27,17 @@ mod flash;
 
 type Uart = Uarte<'static, UARTETWISPI0>;
 
+/// A counter that keeps track of how many panics there have been. It keeps its value across resets.
 #[link_section = ".uninit"]
 static mut PANIC_COUNTS: MaybeUninit<u32> = MaybeUninit::uninit();
 
 #[embassy::main]
 async fn main(_spawner: embassy::executor::Spawner, p: embassy_nrf::Peripherals) {
+    // Rust analyzer doesn't like the embassy macro, so as a hack, just immediately go to another function without it
     run_main(p).await;
 }
 
+/// A print macro that takes the uart and then the print expression like println!.
 #[macro_export]
 macro_rules! uprintln {
     ($uart:expr, $($arg:tt)*) => {
@@ -56,6 +60,7 @@ async fn run_main(p: embassy_nrf::Peripherals) {
         registers: unsafe { &*embassy_nrf::pac::NVMC::PTR },
     };
 
+    // Configure the uart
     let mut config = uarte::Config::default();
     config.parity = uarte::Parity::EXCLUDED;
     config.baudrate = uarte::Baudrate::BAUD115200;
@@ -79,12 +84,15 @@ async fn run_main(p: embassy_nrf::Peripherals) {
         config,
     );
 
+    // Show a sign of life and print the version
     uprintln!(
         uart,
         "\n\n--== == == == == == == == == == == == == == ==--\nStarting bootloader version `{}` with git hash `{}`",
         env!("CP_CARGO"),
         env!("CP_GIT")
     );
+
+    // Get how many panics we've gotten
     let panics = unsafe { PANIC_COUNTS.assume_init_mut() };
     if *panics > 10 {
         // Probably random garbage from ram, so we've probably just booted
@@ -109,6 +117,7 @@ async fn run_main(p: embassy_nrf::Peripherals) {
         *panics = 0;
     }
 
+    // Print the memory regions we're using, just for convenience
     uprintln!(uart, "\nDefined memory regions:");
     uprintln!(
         uart,
@@ -180,26 +189,36 @@ async fn run_main(p: embassy_nrf::Peripherals) {
     loop {}
 }
 
+/// Actually performs the swapping procedure.
+///
+/// If the state has been prepared for a swap, all pages will be swapped.
+/// If not, then it will resume a previous swap.
 async fn perform_swap(
     test_swap: bool,
     state: &mut BootloaderState,
     flash: &mut impl shared::Flash,
     uart: &mut Uart,
 ) {
+    // Gather info about our memory layout
     let total_program_pages = program_slot_a_page_range().len() as u32;
     let total_scratch_pages = bootloader_scratch_page_range().len() as u32;
 
     uprintln!(uart, "total_program_pages: {}", total_program_pages);
     uprintln!(uart, "total_scratch_pages: {}", total_scratch_pages);
 
+    // We're doing a round-robin for scratch page usage, so we need to keep track of the used index
     let mut scratch_page_index = 0;
 
+    // We need to swap every page
     for page in 0..total_program_pages {
+        // Get the addresses of the A and B page slot
         let slot_a_page = program_slot_a_page_range().start + page;
         let slot_a_address = slot_a_page * PAGE_SIZE;
         let slot_b_page = program_slot_b_page_range().start + page;
         let slot_b_address = slot_b_page * PAGE_SIZE;
 
+        // We run a small statemachine that needs to continue until the page is swapped.
+        // If we resume a swap due to a reset, then it is possible that a lot of pages have already been swapped
         while !state.get_page_state(page).is_swapped() {
             uprintln!(
                 uart,
@@ -207,6 +226,7 @@ async fn perform_swap(
                 page,
                 state.get_page_state(page)
             );
+            // Depending on the state, we need to swap certain pages
             match state.get_page_state(page) {
                 PageState::Original => {
                     // We need to copy the A page to a scratch page
@@ -291,6 +311,7 @@ async fn perform_swap(
             }
         }
 
+        // Go to the next scratch page or start over if we were on the last one
         scratch_page_index = (scratch_page_index + 1) % total_scratch_pages;
     }
 
@@ -301,9 +322,11 @@ async fn perform_swap(
         state.set_goal(BootloaderGoal::JumpToApplication);
     }
 
+    // We've changed the goal, so we need to store that
     state.store(flash);
 }
 
+/// Jump to the application if the application vector table can be found
 async fn jump_to_application(mut uart: Uart) -> ! {
     // The application may not be stationed at the start of its slot.
     // We need to search for it first.
@@ -351,5 +374,6 @@ async fn jump_to_application(mut uart: Uart) -> ! {
 
 #[cortex_m_rt::exception]
 unsafe fn HardFault(frame: &cortex_m_rt::ExceptionFrame) -> ! {
+    // Just panic because we probably want to reboot
     panic!("Hardfault: {:?}", frame);
 }
