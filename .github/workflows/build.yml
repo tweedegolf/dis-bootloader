@@ -1,0 +1,101 @@
+
+name: Build
+
+on:
+  push:
+    tags:
+        - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  Build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Download toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly-2022-01-30
+          target: thumbv8m.main-none-eabihf
+          override: true
+          components: rustfmt, clippy
+
+      - name: Clippy check logistics
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --features logistics
+      - name: Clippy check feather
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --features feather
+      - name: Clippy check mobility
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --features mobility
+
+      - name: Create artifacts folder
+        run: mkdir -p artifacts
+
+      - name: Build logistics
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --features logistics
+      - name: Copy logistics to artifacts
+        run: cp target/thumbv8m.main-none-eabihf/release/dis-bootloader artifacts/dis-bootloader-logistics.elf
+
+      - name: Build feather
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --features feather
+      - name: Copy feather to artifacts
+        run: cp target/thumbv8m.main-none-eabihf/release/dis-bootloader artifacts/dis-bootloader-feather.elf
+
+      - name: Build mobility
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --features mobility
+      - name: Copy mobility to artifacts
+        run: cp target/thumbv8m.main-none-eabihf/release/dis-bootloader artifacts/dis-bootloader-mobility.elf
+
+      - name: Zip artifacts
+        run: zip artifacts.zip artifacts/*
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: dis-bootloader
+          path: artifacts.zip
+          retention-days: 5
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          body: |
+            Test release
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps 
+          asset_path: ./artifacts.zip
+          asset_name: artifacts.zip
+          asset_content_type: application/zip
+    
