@@ -43,15 +43,20 @@ impl<'a> shared::Flash for Flash<'a> {
         self.registers.config.modify(|_, w| w.wen().wen());
 
         // Write the buffer words to the flash
-        for (data_word, flash_word) in data
+        let word_size = core::mem::size_of::<u32>();
+        let page_words = (page_address..page_address + 0x0000_1000)
+            .step_by(word_size)
+            .map(|address| address as *mut u32);
+
+        // Every word of the buffer corresponds to a word in flash
+        // We only have to write when the words are different
+        for (data_word, flash_word_ptr) in data
             .iter()
-            // Every word of the buffer corresponds to a word in flash
-            .zip((page_address..page_address + 0x0000_1000).step_by(core::mem::size_of::<u32>()))
-            // We only have to write when the words are different
-            .filter(|(b, f)| *b != f)
+            .zip(page_words)
+            .filter(|(word, ptr)| **word != unsafe { **ptr })
         {
             unsafe {
-                (flash_word as *mut u32).write_volatile(*data_word);
+                flash_word_ptr.write_volatile(*data_word);
             }
             // Wait for the write to be done
             while self.registers.ready.read().ready().is_busy() {}
