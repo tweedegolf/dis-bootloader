@@ -180,7 +180,7 @@ dependencies = [
 
 [[package]]
 name = "dis-bootloader"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "arrayvec",
  "cortex-m",
@@ -625,7 +625,7 @@ checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 
 [[package]]
 name = "shared"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crc",
  "num_enum",
