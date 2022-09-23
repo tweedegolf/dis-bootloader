@@ -72,7 +72,7 @@ jobs:
         with:
           command: build
           args: --release --features turing
-      - name: Copy mobility to artifacts
+      - name: Copy turing to artifacts
         run: cp target/thumbv8m.main-none-eabihf/release/dis-bootloader artifacts/dis-bootloader-turing.elf
 
       - name: Zip artifacts
