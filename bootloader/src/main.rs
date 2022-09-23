@@ -74,7 +74,7 @@ async fn run_main(p: embassy_nrf::Peripherals) {
     #[cfg(feature = "mobility")]
     let (uart_rx_pin, uart_tx_pin) = (p.P0_28, p.P0_29);
     #[cfg(feature = "turing")]
-    let (uart_rx_pin, uart_tx_pin) = (p.P0_19, p.P0_30);
+    let (uart_rx_pin, uart_tx_pin) = (p.P0_30, p.P0_19);
 
     let mut uart: Uart = uarte::Uarte::new(
         p.UARTETWISPI0,
