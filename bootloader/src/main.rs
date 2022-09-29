@@ -7,7 +7,6 @@
 use crate::flash::Flash;
 use core::mem::MaybeUninit;
 use embassy_nrf::{
-    gpio::NoPin,
     interrupt,
     peripherals::UARTETWISPI0,
     uarte::{self, Uarte},
@@ -31,8 +30,9 @@ type Uart = Uarte<'static, UARTETWISPI0>;
 #[link_section = ".uninit"]
 static mut PANIC_COUNTS: MaybeUninit<u32> = MaybeUninit::uninit();
 
-#[embassy::main]
-async fn main(_spawner: embassy::executor::Spawner, p: embassy_nrf::Peripherals) {
+#[embassy_executor::main]
+async fn main(_spawner: embassy_executor::Spawner) {
+    let p = embassy_nrf::init(Default::default());
     // Rust analyzer doesn't like the embassy macro, so as a hack, just immediately go to another function without it
     run_main(p).await;
 }
@@ -76,15 +76,7 @@ async fn run_main(p: embassy_nrf::Peripherals) {
     #[cfg(feature = "turing")]
     let (uart_rx_pin, uart_tx_pin) = (p.P0_30, p.P0_19);
 
-    let mut uart: Uart = uarte::Uarte::new(
-        p.UARTETWISPI0,
-        irq,
-        uart_rx_pin,
-        uart_tx_pin,
-        NoPin,
-        NoPin,
-        config,
-    );
+    let mut uart: Uart = uarte::Uarte::new(p.UARTETWISPI0, irq, uart_rx_pin, uart_tx_pin, config);
 
     // Show a sign of life and print the version
     uprintln!(
