@@ -19,7 +19,7 @@ jobs:
       - name: Download toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: nightly-2022-01-30
+          toolchain: nightly-2022-09-22
           target: thumbv8m.main-none-eabihf
           override: true
           components: rustfmt, clippy
