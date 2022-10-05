@@ -69,6 +69,18 @@ impl<'a> shared::Flash for Flash<'a> {
         cortex_m::asm::dsb();
         cortex_m::asm::isb();
     }
+
+    fn read<I: core::slice::SliceIndex<[u8]>>(&self, address_range: I) -> &I::Output {
+        let entire_flash_slice = unsafe {
+            core::slice::from_raw_parts(
+                0x0000_0000 as *const u8,
+                0x0010_0000,
+            )
+        };
+
+        entire_flash_slice.get(address_range).unwrap()
+    }
+
 }
 
 /// Asserts that the address is at the start of a flash page
