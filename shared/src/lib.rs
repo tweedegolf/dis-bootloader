@@ -2,7 +2,22 @@
 #![no_std]
 #![warn(missing_docs)]
 
-pub mod flash_addresses;
+#[cfg(not(feature = "std-compat"))]
+mod linker_flash_addresses;
+#[cfg(not(feature = "std-compat"))]
+/// Helper functions for finding the flash addresses of the memory regions more easily
+pub mod flash_addresses {
+    pub use crate::linker_flash_addresses::*;
+}
+
+#[cfg(feature = "std-compat")]
+mod std_compat_flash_addresses;
+#[cfg(feature = "std-compat")]
+/// Helper functions for finding the flash addresses of the memory regions more easily
+pub mod flash_addresses {
+    pub use crate::std_compat_flash_addresses::*;
+}
+
 pub mod state;
 
 /// A trait defining the common flash operations
