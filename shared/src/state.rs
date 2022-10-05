@@ -137,9 +137,9 @@ impl BootloaderState {
     }
 
     /// Loads the bootloader state from flash
-    pub fn load() -> Self {
+    pub fn load(flash: &impl Flash) -> Self {
         // Get where the state is stored
-        let (state_flash_slice_0, state_flash_slice_1) = unsafe { Self::get_state_flash_slices() };
+        let (state_flash_slice_0, state_flash_slice_1) = unsafe { Self::get_state_flash_slices(flash) };
 
         // Create our buffer and do a sanity check
         let mut buffer = [0xFFFFFFFF; 1024];
@@ -179,10 +179,8 @@ impl BootloaderState {
         flash.program_page(bootloader_state_range().start + PAGE_SIZE, &self.buffer);
     }
 
-    unsafe fn get_state_flash_slices() -> (&'static [u32], &'static [u32]) {
-        let state_range = bootloader_state_range();
-        let start_ptr = state_range.start as *const u32;
-        core::slice::from_raw_parts(start_ptr, state_range.len() / size_of::<u32>()).split_at(1024)
+    unsafe fn get_state_flash_slices<'flash>(flash: &'flash impl Flash) -> (&'flash [u32], &'flash [u32]) {
+        flash.read_u32(bootloader_state_range()).split_at(1024)
     }
 }
 

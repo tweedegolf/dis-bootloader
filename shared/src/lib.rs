@@ -2,7 +2,7 @@
 #![no_std]
 #![warn(missing_docs)]
 
-use core::slice::SliceIndex;
+use core::ops::Range;
 
 #[cfg(not(feature = "std-compat"))]
 mod linker_flash_addresses;
@@ -34,5 +34,10 @@ pub trait Flash {
     /// Read the flash in the given address range
     ///
     /// If the address range is invalid, then the function may panic
-    fn read<I: SliceIndex<[u8]>>(&self, address_range: I) -> &I::Output;
+    fn read_u8(&self, address_range: Range<u32>) -> &[u8];
+
+    /// Read the flash in the given address range
+    ///
+    /// If the index range is invalid, then the function may panic
+    fn read_u32(&self, address_range: Range<u32>) -> &[u32];
 }
