@@ -80,6 +80,8 @@ async fn run_main(
     let (uart_rx_pin, uart_tx_pin) = (device_peripherals.P0_28, device_peripherals.P0_29);
     #[cfg(feature = "turing")]
     let (uart_rx_pin, uart_tx_pin) = (device_peripherals.P0_30, device_peripherals.P0_19);
+    #[cfg(feature = "actinius_icarus")]
+    let (uart_rx_pin, uart_tx_pin) = (device_peripherals.P0_06, device_peripherals.P0_09);
 
     let mut uart: Uart = uarte::Uarte::new(
         device_peripherals.UARTETWISPI0,
