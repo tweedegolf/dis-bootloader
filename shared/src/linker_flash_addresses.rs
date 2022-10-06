@@ -1,4 +1,6 @@
 //! Helper functions for finding the flash addresses of the memory regions more easily
+//! 
+//! This version gets the addresses from the linker script
 
 use core::ops::Range;
 

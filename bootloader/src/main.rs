@@ -156,7 +156,7 @@ async fn run_main(
     );
 
     // Let's check what we need to do by loading the state
-    let mut state = BootloaderState::load();
+    let mut state = BootloaderState::load(&flash);
 
     let scb = core_peripherals.SCB;
 

@@ -8,3 +8,7 @@ edition = "2021"
 [dependencies]
 num_enum = { version = "0.5.1", default-features = false }
 crc = "2.1.0"
+
+[features]
+# When enabled, the library uses the flash addresses defined in external static variables instead of the linker script
+std-compat = []

@@ -1,6 +1,6 @@
 //! Implementation of [Flash]
 
-use core::mem::size_of;
+use core::{mem::size_of, ops::Range};
 
 /// The bootloader's implementation of the flash operations
 pub struct Flash<'a> {
@@ -68,6 +68,26 @@ impl<'a> shared::Flash for Flash<'a> {
         // Synchronize the changes
         cortex_m::asm::dsb();
         cortex_m::asm::isb();
+    }
+
+    fn read_u8(&self, address_range: Range<u32>) -> &[u8] {
+        let entire_flash_slice =
+            unsafe { core::slice::from_raw_parts(0x0000_0000 as *const u8, 0x0010_0000) };
+
+        entire_flash_slice
+            .get(address_range.start as usize..address_range.end as usize)
+            .unwrap()
+    }
+
+    fn read_u32(&self, address_range: Range<u32>) -> &[u32] {
+        assert!(address_range.start % 4 == 0);
+        assert!(address_range.end % 4 == 0);
+
+        let entire_flash_slice = unsafe {
+            core::slice::from_raw_parts(0x0000_0000 as *const u32, 0x0010_0000 / size_of::<u32>())
+        };
+
+        entire_flash_slice.get(address_range.start as usize / 4..address_range.end as usize / 4).unwrap()
     }
 }
 
