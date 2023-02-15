@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "dis-bootloader"
-version = "0.1.2"
+version = "0.1.5"
 dependencies = [
  "arrayvec",
  "cortex-m",
