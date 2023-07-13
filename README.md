@@ -1,6 +1,6 @@
-# nRF9160 Bootloader for Dutch IoT Solutions
+# nRF9160 Bootloader
 
-This is a 100% Rust bootloader for the nRF9160 microcontroller written for Dutch IoT Solutions.
+This is a 100% Rust bootloader for the nRF9160 microcontroller.
 
 Currently, building this project requires a recent nightly compile because is relies on Embassy for the serial output.
 
